@@ -13,7 +13,8 @@ export type ElementType =
     | "ul"
     | "ol"
     | "li"
-    | "TEXT_ELEMENT";
+    | "TEXT_ELEMENT"
+    ;
 
 export interface PerformeElement {
     type: ElementType;
@@ -23,10 +24,15 @@ export interface PerformeElement {
     };
 }
 
-export type PerformeNode = PerformeElement | string;
+export type PerformeNode = PerformeElement | string | ((props: {}) => PerformeElement | null);
+
+export type Hook<T> = {
+  state: T,
+  queue: ((prevState: T) => T)[],
+}
 
 export interface Fiber {
-    type?: ElementType;
+    type?: ElementType | ((props: {}) => PerformeElement | null);
     props: {
         [key: string]: unknown;
         children?: PerformeNode[];
@@ -37,8 +43,13 @@ export interface Fiber {
     effectTag?: "PLACEMENT" | "DELETION" | "UPDATE" | null;
     child?: Fiber | null;
     sibling?: Fiber | null;
+    hooks?: Hook<any>[],
 }
 
-export interface HostFiber extends Fiber {
-    type: ElementType;
+export type HostFiber = Omit<Fiber, 'type'> & {
+  type: ElementType | "TEXT_ELEMENT"
+}
+
+export type FunctionFiber = Omit<Fiber, 'type'> & {
+  type: ((props: {}) => PerformeElement | null)
 }

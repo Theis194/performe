@@ -1,6 +1,8 @@
 import type {
     ElementType,
     Fiber,
+    FunctionFiber,
+    Hook,
     HostFiber,
     PerformeElement,
     PerformeNode,
@@ -75,29 +77,24 @@ function createTextElement(text: string | unknown): PerformeElement {
 }
 
 function createDom(fiber: HostFiber) {
-    const dom =
-        fiber.type == "TEXT_ELEMENT"
-            ? document.createTextNode("")
-            : document.createElement(fiber.type);
+  const dom =
+    fiber.type == "TEXT_ELEMENT"
+      ? document.createTextNode("")
+      : document.createElement(fiber.type)
 
-    const isProperty = (key: string) => key !== "children";
-    Object.keys(fiber.props)
-        .filter(isProperty)
-        .forEach((name) => {
-            (dom as any)[name] = fiber.props[name];
-        });
+  updateDom(dom, {}, fiber.props)
 
-    return dom;
+  return dom
 }
 
 const isEvent = (key: string) => key.startsWith("on");
-const isProperty = (key: string) => key !== "children" && !isEvent(key);
+const isProperty = (key: string) => key !== "children" /* && !isEvent(key) */;
 const isNew =
     (prev: { [key: string]: any }, next: { [key: string]: any }) =>
     (key: string) =>
         prev[key] !== next[key];
 const isGone =
-    (prev: { [key: string]: any }, next: { [key: string]: any }) =>
+    (next: { [key: string]: any }) =>
     (key: string) =>
         !(key in next);
 function updateDom(
@@ -105,6 +102,26 @@ function updateDom(
     prevProps: { [key: string]: any },
     nextProps: { [key: string]: any }
 ) {
+    // Remove old properties
+    Object.keys(prevProps)
+        .filter(isProperty)
+        .filter(isGone(nextProps))
+        .forEach((name) => {
+            (dom as any)[name] = nextProps[name];
+        });
+
+    // Set new or changed properties
+    Object.keys(nextProps)
+        .filter(isProperty)
+        .filter(isNew(prevProps, nextProps))
+        .forEach((name) => {
+            if (name === "style") {
+                (dom as any)[name] = styleObjectToString(nextProps[name])
+            } else {
+                (dom as any)[name] = nextProps[name];
+            }
+        });
+
     //Remove old or changed event listeners
     Object.keys(prevProps)
         .filter(isEvent)
@@ -116,21 +133,6 @@ function updateDom(
             dom.removeEventListener(eventType, prevProps[name]);
         });
 
-    // Remove old properties
-    Object.keys(prevProps)
-        .filter(isProperty)
-        .filter(isGone(prevProps, nextProps))
-        .forEach((name) => {
-            (dom as any)[name] = "";
-        });
-
-    // Set new or changed properties
-    Object.keys(nextProps)
-        .filter(isProperty)
-        .filter(isNew(prevProps, nextProps))
-        .forEach((name) => {
-            (dom as any)[name] = nextProps[name];
-        });
 
     // Add event listeners
     Object.keys(nextProps)
@@ -175,7 +177,12 @@ function workLoop(deadline: IdleDeadline) {
 requestIdleCallback(workLoop);
 
 function performUnitOfWork(fiber: Fiber) {
-    updateHostComponent(fiber as HostFiber);
+    const isFunctionComponent = fiber.type instanceof Function;
+    if (isFunctionComponent) {
+        updateFunctionComponent(fiber as FunctionFiber);
+    } else {
+        updateHostComponent(fiber as HostFiber);
+    }
 
     if (fiber.child) {
         return fiber.child;
@@ -187,6 +194,17 @@ function performUnitOfWork(fiber: Fiber) {
         }
         nextFiber = nextFiber.parent;
     }
+}
+
+let wipFiber: Fiber | null = null
+let hookIndex: number | null = null
+
+function updateFunctionComponent(fiber: FunctionFiber) {
+  wipFiber = fiber
+  hookIndex = 0
+  wipFiber!.hooks = []
+  const children = [fiber.type(fiber.props)]
+  reconcileChildren(fiber, children as PerformeElement[])
 }
 
 function updateHostComponent(fiber: HostFiber) {
@@ -247,7 +265,48 @@ function reconcileChildren(wipFiber: Fiber, elements: PerformeElement[]) {
     }
 }
 
+
+export function useState<T>(initial: T): [T, (_: ((prevState: T) => T)) => void] {
+  const oldHook: Hook<T> | null | undefined =
+    wipFiber!.alternate &&
+    wipFiber!.alternate.hooks &&
+    wipFiber!.alternate.hooks[hookIndex!]
+  const hook: Hook<T> = {
+    state: oldHook ? oldHook.state : initial,
+    queue: [],
+  }
+
+  const actions = oldHook ? oldHook.queue : []
+  actions.forEach(action => {
+    hook.state = action(hook.state)
+  })
+
+  const setState = (action: ((prevState: T) => T)) => {
+    hook.queue.push(action)
+    wipRoot = {
+      dom: currentRoot!.dom,
+      props: currentRoot!.props,
+      alternate: currentRoot,
+    }
+    nextUnitOfWork = wipRoot
+    deletions = []
+  }
+
+  wipFiber!.hooks!.push(hook)
+  hookIndex!++
+  return [hook.state, setState]
+}
+
+export function styleObjectToString(style: any) {
+    return Object.keys(style).reduce(
+        (acc, key) => 
+            `${acc}${key.split(/(?=[A-Z])/).join("-").toLowerCase()}:${style[key]};`,
+		"",
+    )
+}
+
 export const Performe = {
+    useState,
     createElement,
     render,
 };

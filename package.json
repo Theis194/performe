@@ -9,6 +9,7 @@
         "preview": "vite preview"
     },
     "devDependencies": {
+        "react": "^19.1.0",
         "typescript": "~5.8.3",
         "vite": "^6.3.5"
     }
